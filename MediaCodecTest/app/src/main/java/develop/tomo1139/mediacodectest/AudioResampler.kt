@@ -127,6 +127,8 @@ class AudioResampler(context: Context, inputFilePath: String) {
             }
         }
 
+        // TODO: Resample raw audio
+
         // encode & mux audio file
         audioEncodeMux(inputAudioFormat, context)
 
