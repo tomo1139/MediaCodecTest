@@ -54,7 +54,7 @@ class MainActivity : AppCompatActivity() {
             val path = FilePickerUtil.getPath(this, data.data)
 
             Thread {
-                AudioResampler(path).extract(this)
+                AudioResampler(this, path).extract(this)
                 runOnUiThread {
                     Toast.makeText(this, "Resample completed!!", Toast.LENGTH_LONG).show()
                 }

@@ -5,13 +5,26 @@ import android.media.*
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.lang.RuntimeException
 import java.nio.ByteBuffer
 
-class AudioResampler(private val inputFilePath: String) {
+class AudioResampler(context: Context, inputFilePath: String) {
 
     private var rawAudioFileOutputStream: FileOutputStream? = null
 
-    fun extract(context: Context) {
+    private val audioExtractor = MediaExtractor()
+    private val audioTrackIdx: Int
+    private val inputAudioFormat: MediaFormat
+    private val audioMime: String
+    private val audioCodec: MediaCodec
+
+    private val videoExtractor = MediaExtractor()
+    private val videoTrackIdx: Int
+    private val inputVideoFormat: MediaFormat
+    private val videoMime: String
+    private val videoCodec: MediaCodec
+
+    init {
         val outputFilePath = context.getExternalFilesDir(null)
         val outputFile = File(outputFilePath, RAW_AUDIO_FILE_NAME)
         if (outputFile.exists()) {
@@ -25,31 +38,30 @@ class AudioResampler(private val inputFilePath: String) {
             D.p("e: " + e)
         }
 
-        val audioExtractor = MediaExtractor()
-        val videoExtractor = MediaExtractor()
         audioExtractor.setDataSource(inputFilePath)
-        videoExtractor.setDataSource(inputFilePath)
-
-        val audioTrackIdx = getAudioTrackIdx(audioExtractor)
+        audioTrackIdx = getAudioTrackIdx(audioExtractor)
         if (audioTrackIdx == -1) {
             D.p("audio not found")
-            return
+            throw RuntimeException("audio not found")
         }
+        inputAudioFormat = audioExtractor.getTrackFormat(audioTrackIdx)
+        D.p("inputAudioFormat: " + inputAudioFormat)
+        audioMime = inputAudioFormat.getString(MediaFormat.KEY_MIME) ?: ""
+        audioCodec = MediaCodec.createDecoderByType(audioMime)
 
-        val videoTrackIdx = getVideoTrackIdx(videoExtractor)
+        videoExtractor.setDataSource(inputFilePath)
+        videoTrackIdx = getVideoTrackIdx(videoExtractor)
         if (videoTrackIdx == -1) {
             D.p("video not found")
-            return
+            throw RuntimeException("video not found")
         }
-
-        val inputAudioFormat = audioExtractor.getTrackFormat(audioTrackIdx)
-        D.p("inputAudioFormat: " + inputAudioFormat)
-
-        val inputVideoFormat = videoExtractor.getTrackFormat(videoTrackIdx)
+        inputVideoFormat = videoExtractor.getTrackFormat(videoTrackIdx)
         D.p("inputVideoFormat: " + inputVideoFormat)
+        videoMime = inputVideoFormat.getString(MediaFormat.KEY_MIME) ?: ""
+        videoCodec = MediaCodec.createDecoderByType(videoMime)
+    }
 
-        val audioMime = inputAudioFormat.getString(MediaFormat.KEY_MIME)
-        val audioCodec = MediaCodec.createDecoderByType(audioMime)
+    fun extract(context: Context) {
         audioCodec.configure(inputAudioFormat, null, null, 0)
         audioCodec.start()
 
