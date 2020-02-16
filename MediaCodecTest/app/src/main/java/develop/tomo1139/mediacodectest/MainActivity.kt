@@ -178,8 +178,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // encode
-        encode(inputAudioFormat)
+        // encode & mux audio file
+        audioEncodeMux(inputAudioFormat)
 
         extractor.release()
         codec.stop()
@@ -192,7 +192,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun encode(inputAudioFormat: MediaFormat) {
+    private fun audioEncodeMux(inputAudioFormat: MediaFormat) {
         val inputFilePath = getExternalFilesDir(null)
         val inputFile = File(inputFilePath, RAW_AUDIO_FILE_NAME)
         val fileInputStream = FileInputStream(inputFile)
