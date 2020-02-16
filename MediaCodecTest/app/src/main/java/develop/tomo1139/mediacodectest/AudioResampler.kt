@@ -12,6 +12,8 @@ class AudioResampler(context: Context, inputFilePath: String) {
 
     private var rawAudioFileOutputStream: FileOutputStream? = null
 
+    private val workingFilesDir = context.getExternalFilesDir(null)
+
     private val audioExtractor = MediaExtractor()
     private val audioTrackIdx: Int
     private val inputAudioFormat: MediaFormat
@@ -25,8 +27,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
     private val videoCodec: MediaCodec
 
     init {
-        val outputFilePath = context.getExternalFilesDir(null)
-        val outputFile = File(outputFilePath, RAW_AUDIO_FILE_NAME)
+        val outputFile = File(workingFilesDir, RAW_AUDIO_FILE_NAME)
         if (outputFile.exists()) {
             outputFile.delete()
         }
@@ -61,7 +62,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
         videoCodec = MediaCodec.createDecoderByType(videoMime)
     }
 
-    fun extract(context: Context) {
+    fun execute() {
         audioCodec.configure(inputAudioFormat, null, null, 0)
         audioCodec.start()
 
@@ -130,7 +131,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
         // TODO: Resample raw audio
 
         // encode & mux audio file
-        audioEncodeMux(inputAudioFormat, context)
+        audioEncodeMux()
 
         audioExtractor.release()
         videoExtractor.release()
@@ -144,13 +145,11 @@ class AudioResampler(context: Context, inputFilePath: String) {
         }
     }
 
-    private fun audioEncodeMux(inputAudioFormat: MediaFormat, context: Context) {
-        val inputFilePath = context.getExternalFilesDir(null)
-        val inputFile = File(inputFilePath, RAW_AUDIO_FILE_NAME)
+    private fun audioEncodeMux() {
+        val inputFile = File(workingFilesDir, RAW_AUDIO_FILE_NAME)
         val fileInputStream = FileInputStream(inputFile)
 
-        val outputFilePath = context.getExternalFilesDir(null)
-        val outputFile = File(outputFilePath, ENCODED_AUDIO_FILE_NAME)
+        val outputFile = File(workingFilesDir, ENCODED_AUDIO_FILE_NAME)
         if (outputFile.exists()) {
             outputFile.delete()
         }
@@ -200,6 +199,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
                             dstBuffer.put(tempBuffer, 0, bytesRead)
                             codec.queueInputBuffer(inputBufferIndex, 0, bytesRead, presentationTimeUs, 0)
                             presentationTimeUs = 1000000L  * (totalBytesRead / (2 * channelCount)) / sampleRate
+                            D.p("presentationTimeUs: " + presentationTimeUs)
                         }
                     }
                 }
