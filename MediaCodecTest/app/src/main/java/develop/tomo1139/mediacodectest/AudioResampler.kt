@@ -17,14 +17,14 @@ class AudioResampler(context: Context, inputFilePath: String) {
     private val audioExtractor = MediaExtractor()
     private val audioTrackIdx: Int
     private val inputAudioFormat: MediaFormat
-    private val audioMime: String
-    private val audioCodec: MediaCodec
+    private val inputAudioMime: String
+    private val audioDecoder: MediaCodec
 
     private val videoExtractor = MediaExtractor()
     private val videoTrackIdx: Int
     private val inputVideoFormat: MediaFormat
-    private val videoMime: String
-    private val videoCodec: MediaCodec
+    private val inputVideoMime: String
+    private val videoDecoder: MediaCodec
 
     init {
         val outputFile = File(workingFilesDir, RAW_AUDIO_FILE_NAME)
@@ -47,8 +47,8 @@ class AudioResampler(context: Context, inputFilePath: String) {
         }
         inputAudioFormat = audioExtractor.getTrackFormat(audioTrackIdx)
         D.p("inputAudioFormat: " + inputAudioFormat)
-        audioMime = inputAudioFormat.getString(MediaFormat.KEY_MIME) ?: ""
-        audioCodec = MediaCodec.createDecoderByType(audioMime)
+        inputAudioMime = inputAudioFormat.getString(MediaFormat.KEY_MIME) ?: ""
+        audioDecoder = MediaCodec.createDecoderByType(inputAudioMime)
 
         videoExtractor.setDataSource(inputFilePath)
         videoTrackIdx = getVideoTrackIdx(videoExtractor)
@@ -58,13 +58,13 @@ class AudioResampler(context: Context, inputFilePath: String) {
         }
         inputVideoFormat = videoExtractor.getTrackFormat(videoTrackIdx)
         D.p("inputVideoFormat: " + inputVideoFormat)
-        videoMime = inputVideoFormat.getString(MediaFormat.KEY_MIME) ?: ""
-        videoCodec = MediaCodec.createDecoderByType(videoMime)
+        inputVideoMime = inputVideoFormat.getString(MediaFormat.KEY_MIME) ?: ""
+        videoDecoder = MediaCodec.createDecoderByType(inputVideoMime)
     }
 
     fun execute() {
-        audioCodec.configure(inputAudioFormat, null, null, 0)
-        audioCodec.start()
+        audioDecoder.configure(inputAudioFormat, null, null, 0)
+        audioDecoder.start()
 
         audioExtractor.selectTrack(audioTrackIdx)
 
@@ -75,9 +75,9 @@ class AudioResampler(context: Context, inputFilePath: String) {
         // decode
         while (!outputEnd) {
             if (!inputEnd) {
-                val inputBufferIndex = audioCodec.dequeueInputBuffer(timeOutUs)
+                val inputBufferIndex = audioDecoder.dequeueInputBuffer(timeOutUs)
                 if (inputBufferIndex >= 0) {
-                    val inputBuffer = audioCodec.getInputBuffer(inputBufferIndex) as ByteBuffer
+                    val inputBuffer = audioDecoder.getInputBuffer(inputBufferIndex) as ByteBuffer
 
                     var sampleSize = audioExtractor.readSampleData(inputBuffer, 0)
 
@@ -89,7 +89,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
                         presentationTimeUs = audioExtractor.sampleTime
                     }
                     val flags = if (inputEnd) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0
-                    audioCodec.queueInputBuffer(inputBufferIndex, 0, sampleSize, presentationTimeUs, flags)
+                    audioDecoder.queueInputBuffer(inputBufferIndex, 0, sampleSize, presentationTimeUs, flags)
 
                     if (!inputEnd) {
                         audioExtractor.advance()
@@ -100,10 +100,10 @@ class AudioResampler(context: Context, inputFilePath: String) {
             }
 
             val bufferInfo = MediaCodec.BufferInfo()
-            val outputBufferIndex = audioCodec.dequeueOutputBuffer(bufferInfo, timeOutUs)
+            val outputBufferIndex = audioDecoder.dequeueOutputBuffer(bufferInfo, timeOutUs)
 
             if (outputBufferIndex >= 0) {
-                val outputBuffer = audioCodec.getOutputBuffer(outputBufferIndex)
+                val outputBuffer = audioDecoder.getOutputBuffer(outputBufferIndex)
 
                 val dst = ByteArray(bufferInfo.size)
                 val oldPosition = outputBuffer?.position() ?: 0
@@ -117,14 +117,14 @@ class AudioResampler(context: Context, inputFilePath: String) {
                     D.p("e: " + e)
                 }
 
-                audioCodec.releaseOutputBuffer(outputBufferIndex, false)
+                audioDecoder.releaseOutputBuffer(outputBufferIndex, false)
 
                 if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                     D.p("outputEnd = true")
                     outputEnd = true
                 }
             } else if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                D.p("outputFormatChanged: " + audioCodec.outputFormat)
+                D.p("outputFormatChanged: " + audioDecoder.outputFormat)
             }
         }
 
@@ -135,8 +135,8 @@ class AudioResampler(context: Context, inputFilePath: String) {
 
         audioExtractor.release()
         videoExtractor.release()
-        audioCodec.stop()
-        audioCodec.release()
+        audioDecoder.stop()
+        audioDecoder.release()
 
         try {
             rawAudioFileOutputStream?.close()
@@ -165,12 +165,12 @@ class AudioResampler(context: Context, inputFilePath: String) {
             it.setInteger(MediaFormat.KEY_BIT_RATE, inputAudioFormat.getInteger(MediaFormat.KEY_BIT_RATE))
             it.setInteger(MediaFormat.KEY_CHANNEL_COUNT, channelCount)
         }
-        val codec = MediaCodec.createEncoderByType("audio/mp4a-latm")
-        codec.configure(outputAudioFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        codec.start()
+        val audioEncoder = MediaCodec.createEncoderByType("audio/mp4a-latm")
+        audioEncoder.configure(outputAudioFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        audioEncoder.start()
 
-        val inputBuffers = codec.inputBuffers
-        val outputBuffers = codec.outputBuffers
+        val inputBuffers = audioEncoder.inputBuffers
+        val outputBuffers = audioEncoder.outputBuffers
         val outputBufferInfo = MediaCodec.BufferInfo()
         val tempBuffer = ByteArray(1024*1024)
         var presentationTimeUs = 0L
@@ -185,7 +185,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
                 var inputBufferIndex = 0
 
                 while (inputBufferIndex != -1 && !inputEnd) {
-                    inputBufferIndex = codec.dequeueInputBuffer(CODEC_TIMEOUT_IN_MS)
+                    inputBufferIndex = audioEncoder.dequeueInputBuffer(CODEC_TIMEOUT_IN_MS)
                     if (inputBufferIndex >= 0) {
                         val dstBuffer = inputBuffers[inputBufferIndex]
                         dstBuffer.clear()
@@ -193,11 +193,11 @@ class AudioResampler(context: Context, inputFilePath: String) {
                         val bytesRead = fileInputStream.read(tempBuffer, 0, dstBuffer.limit())
                         if (bytesRead == -1) {
                             inputEnd = true
-                            codec.queueInputBuffer(inputBufferIndex, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            audioEncoder.queueInputBuffer(inputBufferIndex, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                         } else {
                             totalBytesRead += bytesRead
                             dstBuffer.put(tempBuffer, 0, bytesRead)
-                            codec.queueInputBuffer(inputBufferIndex, 0, bytesRead, presentationTimeUs, 0)
+                            audioEncoder.queueInputBuffer(inputBufferIndex, 0, bytesRead, presentationTimeUs, 0)
                             presentationTimeUs = 1000000L  * (totalBytesRead / (2 * channelCount)) / sampleRate
                             D.p("presentationTimeUs: " + presentationTimeUs)
                         }
@@ -209,21 +209,21 @@ class AudioResampler(context: Context, inputFilePath: String) {
                 var outputBufferIndex = 0
 
                 while (outputBufferIndex != MediaCodec.INFO_TRY_AGAIN_LATER) {
-                    outputBufferIndex = codec.dequeueOutputBuffer(outputBufferInfo, CODEC_TIMEOUT_IN_MS)
+                    outputBufferIndex = audioEncoder.dequeueOutputBuffer(outputBufferInfo, CODEC_TIMEOUT_IN_MS)
                     if (outputBufferIndex >= 0) {
                         val encodedData = outputBuffers[outputBufferIndex]
                         encodedData.position(outputBufferInfo.offset)
                         encodedData.limit(outputBufferInfo.offset + outputBufferInfo.size)
 
                         if ((outputBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0 && outputBufferInfo.size != 0) {
-                            codec.releaseOutputBuffer(outputBufferIndex, false)
+                            audioEncoder.releaseOutputBuffer(outputBufferIndex, false)
                         } else {
                             muxer.writeSampleData(audioTrackIdx, outputBuffers[outputBufferIndex], outputBufferInfo)
-                            codec.releaseOutputBuffer(outputBufferIndex, false)
+                            audioEncoder.releaseOutputBuffer(outputBufferIndex, false)
                         }
                     } else if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                        D.p("output format changed: " + codec.outputFormat)
-                        outputAudioFormat = codec.outputFormat
+                        D.p("output format changed: " + audioEncoder.outputFormat)
+                        outputAudioFormat = audioEncoder.outputFormat
                         audioTrackIdx = muxer.addTrack(outputAudioFormat)
                         muxer.start()
                     }
@@ -238,8 +238,8 @@ class AudioResampler(context: Context, inputFilePath: String) {
 
         muxer.stop()
         muxer.release()
-        codec.stop()
-        codec.release()
+        audioEncoder.stop()
+        audioEncoder.release()
         fileInputStream.close()
     }
 
