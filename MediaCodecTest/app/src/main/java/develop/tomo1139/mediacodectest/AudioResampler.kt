@@ -26,6 +26,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
     private val inputVideoMime: String
     private val videoMetaData = MediaMetadataRetriever()
     private val videoDegree: Int
+    private val muxer: MediaMuxer
 
 
     init {
@@ -64,6 +65,14 @@ class AudioResampler(context: Context, inputFilePath: String) {
         videoMetaData.setDataSource(inputFilePath)
         val degreeString = videoMetaData.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
         videoDegree = degreeString?.toInt() ?: 0
+
+
+        val videoOutputFile = File(workingFilesDir, ENCODED_VIDEO_FILE_NAME)
+        if (videoOutputFile.exists()) {
+            videoOutputFile.delete()
+        }
+        muxer = MediaMuxer(videoOutputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        muxer.setOrientationHint(videoDegree)
     }
 
     fun execute() {
@@ -132,8 +141,8 @@ class AudioResampler(context: Context, inputFilePath: String) {
         // TODO: Resample raw audio
 
         // encode & mux audio file
-        //audioEncodeMux()
         createResampledMovie()
+        //audioEncodeMux()
 
         audioExtractor.release()
         videoExtractor.release()
@@ -150,38 +159,126 @@ class AudioResampler(context: Context, inputFilePath: String) {
     private fun createResampledMovie() {
         videoExtractor.selectTrack(videoTrackIdx)
 
-        val outputFile = File(workingFilesDir, ENCODED_VIDEO_FILE_NAME)
-        if (outputFile.exists()) {
-            outputFile.delete()
-        }
-        val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        muxer.setOrientationHint(videoDegree)
         val outputVideoTrackIdx = muxer.addTrack(inputVideoFormat)
-        muxer.start()
+
+        val channelCount = inputAudioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+        val sampleRate = inputAudioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
 
         var muxEnd = false
+        var videoEnd = false
 
         val tempBuffer = ByteBuffer.allocate(1024 * 1024)
 
-        while (!muxEnd) {
-            val sampleSize = videoExtractor.readSampleData(tempBuffer, 0)
-            if (sampleSize < 0) {
-                D.p("muxEnd = true")
-                muxEnd = true
-            } else {
-                val bufferInfo = MediaCodec.BufferInfo()
-                bufferInfo.size = sampleSize
-                bufferInfo.presentationTimeUs = videoExtractor.sampleTime
-                bufferInfo.flags = videoExtractor.sampleFlags
-                muxer.writeSampleData(outputVideoTrackIdx, tempBuffer, bufferInfo)
+        var outputAudioFormat = MediaFormat().also {
+            it.setString(MediaFormat.KEY_MIME, "audio/mp4a-latm")
+            it.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+            it.setInteger(MediaFormat.KEY_SAMPLE_RATE, sampleRate)
+            it.setInteger(MediaFormat.KEY_BIT_RATE, inputAudioFormat.getInteger(MediaFormat.KEY_BIT_RATE))
+            it.setInteger(MediaFormat.KEY_CHANNEL_COUNT, channelCount)
+        }
+        val audioEncoder = MediaCodec.createEncoderByType("audio/mp4a-latm")
+        audioEncoder.configure(outputAudioFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        audioEncoder.start()
+
+        val audioInputBuffers = audioEncoder.inputBuffers
+        val audioOutputBuffers = audioEncoder.outputBuffers
+        val audioOutputBufferInfo = MediaCodec.BufferInfo()
+        val audioTempBuffer = ByteArray(1024*1024)
+        var presentationTimeUs = 0L
+        var audioTrackIdx = 0
+        var totalBytesRead = 0
+
+        var audioInputEnd = false
+        var audioOutputEnd = false
+
+        val inputFile = File(workingFilesDir, RAW_AUDIO_FILE_NAME)
+        val fileInputStream = FileInputStream(inputFile)
+
+        var isMuxerStarted = false
+
+        while (!videoEnd || !audioOutputEnd) {
+
+            while (!videoEnd && isMuxerStarted) {
+                val sampleSize = videoExtractor.readSampleData(tempBuffer, 0)
+                if (sampleSize < 0) {
+                    D.p("muxEnd = true")
+                    videoEnd = true
+                } else {
+                    val bufferInfo = MediaCodec.BufferInfo()
+                    bufferInfo.size = sampleSize
+                    bufferInfo.presentationTimeUs = videoExtractor.sampleTime
+                    bufferInfo.flags = videoExtractor.sampleFlags
+                    muxer.writeSampleData(outputVideoTrackIdx, tempBuffer, bufferInfo)
+                }
+
+                if (!muxEnd) {
+                    videoExtractor.advance()
+                }
+                D.p("sampleTime: " + videoExtractor.sampleTime)
             }
 
-            if (!muxEnd) {
-                videoExtractor.advance()
+            while (!audioOutputEnd) {
+                if (!audioInputEnd) {
+                    var inputBufferIndex = 0
+
+                    while (inputBufferIndex != -1 && !audioInputEnd) {
+                        inputBufferIndex = audioEncoder.dequeueInputBuffer(CODEC_TIMEOUT_IN_US)
+                        if (inputBufferIndex >= 0) {
+                            val dstBuffer = audioInputBuffers[inputBufferIndex]
+                            dstBuffer.clear()
+
+                            val bytesRead = fileInputStream.read(audioTempBuffer, 0, dstBuffer.limit())
+                            if (bytesRead == -1) {
+                                audioInputEnd = true
+                                D.p("audioInputEnd = true")
+                                audioEncoder.queueInputBuffer(inputBufferIndex, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            } else {
+                                totalBytesRead += bytesRead
+                                dstBuffer.put(audioTempBuffer, 0, bytesRead)
+                                audioEncoder.queueInputBuffer(inputBufferIndex, 0, bytesRead, presentationTimeUs, 0)
+                                presentationTimeUs = 1000000L  * (totalBytesRead / (2 * channelCount)) / sampleRate
+                                D.p("presentationTimeUs: " + presentationTimeUs)
+                            }
+                        }
+                    }
+                }
+
+                if (!audioOutputEnd) {
+                    var audioOutputBufferIndex = 0
+
+                    while (audioOutputBufferIndex != MediaCodec.INFO_TRY_AGAIN_LATER) {
+                        audioOutputBufferIndex = audioEncoder.dequeueOutputBuffer(audioOutputBufferInfo, CODEC_TIMEOUT_IN_US)
+                        if (audioOutputBufferIndex >= 0) {
+                            val encodedData = audioOutputBuffers[audioOutputBufferIndex]
+                            encodedData.position(audioOutputBufferInfo.offset)
+                            encodedData.limit(audioOutputBufferInfo.offset + audioOutputBufferInfo.size)
+
+                            if ((audioOutputBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0 && audioOutputBufferInfo.size != 0) {
+                                audioEncoder.releaseOutputBuffer(audioOutputBufferIndex, false)
+                            } else {
+                                muxer.writeSampleData(audioTrackIdx, audioOutputBuffers[audioOutputBufferIndex], audioOutputBufferInfo)
+                                audioEncoder.releaseOutputBuffer(audioOutputBufferIndex, false)
+                            }
+                        } else if (audioOutputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                            D.p("output format changed: " + audioEncoder.outputFormat)
+                            outputAudioFormat = audioEncoder.outputFormat
+                            audioTrackIdx = muxer.addTrack(outputAudioFormat)
+                            muxer.start()
+                            isMuxerStarted = true
+                        }
+
+                        if (audioOutputBufferInfo.flags == MediaCodec.BUFFER_FLAG_END_OF_STREAM) {
+                            D.p("audioOutputEnd = true")
+                            audioOutputEnd = true
+                        }
+                    }
+                }
             }
-            D.p("sampleTime: " + videoExtractor.sampleTime)
         }
 
+        audioEncoder.stop()
+        audioEncoder.release()
+        fileInputStream.close()
         muxer.stop()
         muxer.release()
     }
@@ -194,8 +291,6 @@ class AudioResampler(context: Context, inputFilePath: String) {
         if (outputFile.exists()) {
             outputFile.delete()
         }
-
-        val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
         val channelCount = inputAudioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
         val sampleRate = inputAudioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
@@ -210,10 +305,10 @@ class AudioResampler(context: Context, inputFilePath: String) {
         audioEncoder.configure(outputAudioFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         audioEncoder.start()
 
-        val inputBuffers = audioEncoder.inputBuffers
-        val outputBuffers = audioEncoder.outputBuffers
-        val outputBufferInfo = MediaCodec.BufferInfo()
-        val tempBuffer = ByteArray(1024*1024)
+        val audioInputBuffers = audioEncoder.inputBuffers
+        val audioOutputBuffers = audioEncoder.outputBuffers
+        val audioOutputBufferInfo = MediaCodec.BufferInfo()
+        val audioTempBuffer = ByteArray(1024*1024)
         var presentationTimeUs = 0L
         var audioTrackIdx = 0
         var totalBytesRead = 0
@@ -228,16 +323,16 @@ class AudioResampler(context: Context, inputFilePath: String) {
                 while (inputBufferIndex != -1 && !inputEnd) {
                     inputBufferIndex = audioEncoder.dequeueInputBuffer(CODEC_TIMEOUT_IN_US)
                     if (inputBufferIndex >= 0) {
-                        val dstBuffer = inputBuffers[inputBufferIndex]
+                        val dstBuffer = audioInputBuffers[inputBufferIndex]
                         dstBuffer.clear()
 
-                        val bytesRead = fileInputStream.read(tempBuffer, 0, dstBuffer.limit())
+                        val bytesRead = fileInputStream.read(audioTempBuffer, 0, dstBuffer.limit())
                         if (bytesRead == -1) {
                             inputEnd = true
                             audioEncoder.queueInputBuffer(inputBufferIndex, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                         } else {
                             totalBytesRead += bytesRead
-                            dstBuffer.put(tempBuffer, 0, bytesRead)
+                            dstBuffer.put(audioTempBuffer, 0, bytesRead)
                             audioEncoder.queueInputBuffer(inputBufferIndex, 0, bytesRead, presentationTimeUs, 0)
                             presentationTimeUs = 1000000L  * (totalBytesRead / (2 * channelCount)) / sampleRate
                             D.p("presentationTimeUs: " + presentationTimeUs)
@@ -250,16 +345,16 @@ class AudioResampler(context: Context, inputFilePath: String) {
                 var audioOutputBufferIndex = 0
 
                 while (audioOutputBufferIndex != MediaCodec.INFO_TRY_AGAIN_LATER) {
-                    audioOutputBufferIndex = audioEncoder.dequeueOutputBuffer(outputBufferInfo, CODEC_TIMEOUT_IN_US)
+                    audioOutputBufferIndex = audioEncoder.dequeueOutputBuffer(audioOutputBufferInfo, CODEC_TIMEOUT_IN_US)
                     if (audioOutputBufferIndex >= 0) {
-                        val encodedData = outputBuffers[audioOutputBufferIndex]
-                        encodedData.position(outputBufferInfo.offset)
-                        encodedData.limit(outputBufferInfo.offset + outputBufferInfo.size)
+                        val encodedData = audioOutputBuffers[audioOutputBufferIndex]
+                        encodedData.position(audioOutputBufferInfo.offset)
+                        encodedData.limit(audioOutputBufferInfo.offset + audioOutputBufferInfo.size)
 
-                        if ((outputBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0 && outputBufferInfo.size != 0) {
+                        if ((audioOutputBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0 && audioOutputBufferInfo.size != 0) {
                             audioEncoder.releaseOutputBuffer(audioOutputBufferIndex, false)
                         } else {
-                            muxer.writeSampleData(audioTrackIdx, outputBuffers[audioOutputBufferIndex], outputBufferInfo)
+                            muxer.writeSampleData(audioTrackIdx, audioOutputBuffers[audioOutputBufferIndex], audioOutputBufferInfo)
                             audioEncoder.releaseOutputBuffer(audioOutputBufferIndex, false)
                         }
                     } else if (audioOutputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
@@ -269,7 +364,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
                         muxer.start()
                     }
 
-                    if (outputBufferInfo.flags == MediaCodec.BUFFER_FLAG_END_OF_STREAM) {
+                    if (audioOutputBufferInfo.flags == MediaCodec.BUFFER_FLAG_END_OF_STREAM) {
                         D.p("outputEnd = true")
                         outputEnd = true
                     }
