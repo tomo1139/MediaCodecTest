@@ -45,7 +45,7 @@ class MainActivity : AppCompatActivity() {
     ) {
         if (requestCode == REQUEST_CODE_PERMISSION) {
             if (grantResults.isNotEmpty() && grantResults.first() == PackageManager.PERMISSION_GRANTED) {
-                FilePickerUtil.showGallery(this, 9999)
+                FilePickerUtil.showGallery(this, REQUEST_CODE_FILE_SELECT)
             } else {
                 D.p("need permission")
             }
@@ -58,14 +58,13 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != Activity.RESULT_OK) return
 
-        if (requestCode == 9999) {
+        if (requestCode == REQUEST_CODE_FILE_SELECT) {
             data?.data ?: return
 
             val path = FilePickerUtil.getPath(this, data.data)
-            D.p("path: " + path)
 
             val outputFilePath = getExternalFilesDir(null)
-            val outputFile = File(outputFilePath, "output.wav")
+            val outputFile = File(outputFilePath, RAW_AUDIO_FILE_NAME)
             //D.p("outputFilePath: " + outputFile.absolutePath)
             try {
                 fileOutputStream = FileOutputStream(outputFile,false)
@@ -99,7 +98,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         } else {
-            FilePickerUtil.showGallery(this, 9999)
+            FilePickerUtil.showGallery(this, REQUEST_CODE_FILE_SELECT)
         }
     }
 
@@ -124,6 +123,7 @@ class MainActivity : AppCompatActivity() {
         var outputEnd = false
         val timeOutUs = 1000L
 
+        // extract, decode
         while (!outputEnd) {
             if (!inputEnd) {
                 val inputBufferIndex = codec.dequeueInputBuffer(timeOutUs)
@@ -179,6 +179,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // encode
+        encode()
+
         extractor.release()
         codec.stop()
         codec.release()
@@ -188,6 +191,10 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             D.p("e: " + e)
         }
+    }
+
+    private fun encode() {
+
     }
 
     private fun getAudioTrackIdx(extractor: MediaExtractor): Int {
@@ -203,5 +210,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_CODE_PERMISSION = 300
+        private const val REQUEST_CODE_FILE_SELECT = 9999
+        private const val RAW_AUDIO_FILE_NAME = "rawAudio"
     }
 }
