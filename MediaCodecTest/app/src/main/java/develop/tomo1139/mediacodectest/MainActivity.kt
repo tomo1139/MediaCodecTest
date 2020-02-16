@@ -124,8 +124,7 @@ class MainActivity : AppCompatActivity() {
         var outputEnd = false
         val timeOutUs = 1000L
 
-        while (!inputEnd) {
-            D.p("decoding... " + ", inputEnd: " + inputEnd + ", outputEnd: " + outputEnd)
+        while (!outputEnd) {
             if (!inputEnd) {
                 val inputBufferIndex = codec.dequeueInputBuffer(timeOutUs)
                 if (inputBufferIndex >= 0) {
@@ -159,8 +158,6 @@ class MainActivity : AppCompatActivity() {
 
                 val dst = ByteArray(bufferInfo.size)
                 val oldPosition = outputBuffer?.position() ?: 0
-
-                D.p("info.size: " + bufferInfo.size + ", outputBuffer: " + outputBuffer + ", outputBufferIndex: " + outputBufferIndex + ", oldPosition: " + oldPosition)
 
                 outputBuffer?.get(dst)
                 outputBuffer?.position(oldPosition)
