@@ -102,21 +102,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun extract(path: String) {
-        val extractor = MediaExtractor()
-        extractor.setDataSource(path)
+        val videoExtractor = MediaExtractor()
+        val audioExtractor = MediaExtractor()
+        audioExtractor.setDataSource(path)
 
-        val audioTrackIdx = getAudioTrackIdx(extractor)
+        val audioTrackIdx = getAudioTrackIdx(audioExtractor)
         if (audioTrackIdx == -1) return
 
-        val inputAudioFormat = extractor.getTrackFormat(audioTrackIdx)
+        val videoTrackIdx = getVideoTrackIdx(videoExtractor)
+        if (videoTrackIdx == -1) return
+
+        val inputAudioFormat = audioExtractor.getTrackFormat(audioTrackIdx)
         D.p("inputAudioFormat: " + inputAudioFormat)
 
-        val mime = inputAudioFormat.getString(MediaFormat.KEY_MIME)
-        val codec = MediaCodec.createDecoderByType(mime)
-        codec.configure(inputAudioFormat, null, null, 0)
-        codec.start()
+        val inputVideoFormat = videoExtractor.getTrackFormat(videoTrackIdx)
+        D.p("inputVideoFormat: " + inputVideoFormat)
 
-        extractor.selectTrack(audioTrackIdx)
+        val audioMime = inputAudioFormat.getString(MediaFormat.KEY_MIME)
+        val audioCodec = MediaCodec.createDecoderByType(audioMime)
+        audioCodec.configure(inputAudioFormat, null, null, 0)
+        audioCodec.start()
+
+        audioExtractor.selectTrack(audioTrackIdx)
 
         var inputEnd = false
         var outputEnd = false
@@ -125,24 +132,24 @@ class MainActivity : AppCompatActivity() {
         // decode
         while (!outputEnd) {
             if (!inputEnd) {
-                val inputBufferIndex = codec.dequeueInputBuffer(timeOutUs)
+                val inputBufferIndex = audioCodec.dequeueInputBuffer(timeOutUs)
                 if (inputBufferIndex >= 0) {
-                    val inputBuffer = codec.getInputBuffer(inputBufferIndex) as ByteBuffer
+                    val inputBuffer = audioCodec.getInputBuffer(inputBufferIndex) as ByteBuffer
 
-                    var sampleSize = extractor.readSampleData(inputBuffer, 0)
+                    var sampleSize = audioExtractor.readSampleData(inputBuffer, 0)
 
                     var presentationTimeUs = 0L
                     if (sampleSize < 0) {
                         inputEnd = true
                         sampleSize = 0
                     } else {
-                        presentationTimeUs = extractor.sampleTime
+                        presentationTimeUs = audioExtractor.sampleTime
                     }
                     val flags = if (inputEnd) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0
-                    codec.queueInputBuffer(inputBufferIndex, 0, sampleSize, presentationTimeUs, flags)
+                    audioCodec.queueInputBuffer(inputBufferIndex, 0, sampleSize, presentationTimeUs, flags)
 
                     if (!inputEnd) {
-                        extractor.advance()
+                        audioExtractor.advance()
                     }
 
                     D.p("presentationTimeUs: " + presentationTimeUs + ", sampleSize: " + sampleSize + ", inputEnd: " + inputEnd)
@@ -150,10 +157,10 @@ class MainActivity : AppCompatActivity() {
             }
 
             val bufferInfo = MediaCodec.BufferInfo()
-            val outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, timeOutUs)
+            val outputBufferIndex = audioCodec.dequeueOutputBuffer(bufferInfo, timeOutUs)
 
             if (outputBufferIndex >= 0) {
-                val outputBuffer = codec.getOutputBuffer(outputBufferIndex)
+                val outputBuffer = audioCodec.getOutputBuffer(outputBufferIndex)
 
                 val dst = ByteArray(bufferInfo.size)
                 val oldPosition = outputBuffer?.position() ?: 0
@@ -167,23 +174,24 @@ class MainActivity : AppCompatActivity() {
                     D.p("e: " + e)
                 }
 
-                codec.releaseOutputBuffer(outputBufferIndex, false)
+                audioCodec.releaseOutputBuffer(outputBufferIndex, false)
 
                 if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                     D.p("outputEnd = true")
                     outputEnd = true
                 }
             } else if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                D.p("outputFormatChanged: " + codec.outputFormat)
+                D.p("outputFormatChanged: " + audioCodec.outputFormat)
             }
         }
 
         // encode & mux audio file
         audioEncodeMux(inputAudioFormat)
 
-        extractor.release()
-        codec.stop()
-        codec.release()
+        audioExtractor.release()
+        videoExtractor.release()
+        audioCodec.stop()
+        audioCodec.release()
 
         try {
             fileOutputStream?.close()
@@ -296,6 +304,17 @@ class MainActivity : AppCompatActivity() {
             val format = extractor.getTrackFormat(idx)
             val mime = format.getString(MediaFormat.KEY_MIME)
             if (mime.startsWith("audio")) {
+                return idx
+            }
+        }
+        return -1
+    }
+
+    private fun getVideoTrackIdx(extractor: MediaExtractor): Int {
+        for (idx in 0 until extractor.trackCount) {
+            val format = extractor.getTrackFormat(idx)
+            val mime = format.getString(MediaFormat.KEY_MIME)
+            if (mime.startsWith("video")) {
                 return idx
             }
         }
