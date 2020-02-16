@@ -233,7 +233,7 @@ class AudioResampler(private val inputFilePath: String) {
         for (idx in 0 until extractor.trackCount) {
             val format = extractor.getTrackFormat(idx)
             val mime = format.getString(MediaFormat.KEY_MIME)
-            if (mime.startsWith("audio")) {
+            if (mime?.startsWith("audio") == true) {
                 return idx
             }
         }
@@ -244,7 +244,7 @@ class AudioResampler(private val inputFilePath: String) {
         for (idx in 0 until extractor.trackCount) {
             val format = extractor.getTrackFormat(idx)
             val mime = format.getString(MediaFormat.KEY_MIME)
-            if (mime.startsWith("video")) {
+            if (mime?.startsWith("video") == true) {
                 return idx
             }
         }
