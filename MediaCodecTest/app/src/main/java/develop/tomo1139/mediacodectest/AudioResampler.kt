@@ -164,7 +164,6 @@ class AudioResampler(context: Context, inputFilePath: String) {
         val channelCount = inputAudioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
         val sampleRate = inputAudioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
 
-        var muxEnd = false
         var videoEnd = false
 
         val tempBuffer = ByteBuffer.allocate(1024 * 1024)
@@ -201,7 +200,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
             while (!videoEnd && isMuxerStarted) {
                 val sampleSize = videoExtractor.readSampleData(tempBuffer, 0)
                 if (sampleSize < 0) {
-                    D.p("muxEnd = true")
+                    D.p("videoEnd = true")
                     videoEnd = true
                 } else {
                     val bufferInfo = MediaCodec.BufferInfo()
@@ -211,7 +210,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
                     muxer.writeSampleData(outputVideoTrackIdx, tempBuffer, bufferInfo)
                 }
 
-                if (!muxEnd) {
+                if (!videoEnd) {
                     videoExtractor.advance()
                 }
                 D.p("sampleTime: " + videoExtractor.sampleTime)
