@@ -16,14 +16,15 @@ jstring Java_develop_tomo1139_mediacodectest_AudioResampler_resample(JNIEnv* env
      }
 
      int intData;
+     short shortData;
      int dataIdx = 0;
      int lastWriteIdx = -1;
-     while (fread(&intData, sizeof(intData), 1, readFp)) {
+     while (fread(&shortData, sizeof(shortData), 1, readFp)) {
          dataIdx++;
          int outputIdx = dataIdx * 44.1 / 48;
          if (outputIdx != lastWriteIdx) {
              lastWriteIdx = outputIdx;
-             fwrite(&intData, sizeof(intData), 1, writeFp);
+             fwrite(&shortData, sizeof(shortData), 1, writeFp);
          }
      }
 

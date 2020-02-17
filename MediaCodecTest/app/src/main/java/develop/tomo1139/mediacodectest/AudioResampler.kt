@@ -194,7 +194,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
         var audioInputEnd = false
         var audioOutputEnd = false
 
-        val inputFile = File(workingFilesDir, RAW_AUDIO_FILE_NAME)
+        val inputFile = File(workingFilesDir, RESAMPLED_RAW_AUDIO_FILE_NAME)
         val fileInputStream = FileInputStream(inputFile)
 
         var isMuxerStarted = false
