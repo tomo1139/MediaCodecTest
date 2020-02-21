@@ -1,3 +1,4 @@
+
 package develop.tomo1139.mediacodectest
 
 import android.content.Context
@@ -10,7 +11,7 @@ import java.nio.ByteBuffer
 
 class AudioResampler(context: Context, inputFilePath: String) {
 
-    private external fun resample(inputFilePath: String, outputFilePath: String): String
+    private external fun resample(channelCount: Int, inputFilePath: String, outputFilePath: String): String
 
     private var rawAudioFileOutputStream: FileOutputStream? = null
 
@@ -19,6 +20,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
     private val audioExtractor = MediaExtractor()
     private val audioTrackIdx: Int
     private val inputAudioFormat: MediaFormat
+    private val inputChannelCount: Int
     private val inputAudioMime: String
     private val audioDecoder: MediaCodec
 
@@ -51,6 +53,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
             throw RuntimeException("audio not found")
         }
         inputAudioFormat = audioExtractor.getTrackFormat(audioTrackIdx)
+        inputChannelCount = inputAudioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
         D.p("inputAudioFormat: " + inputAudioFormat)
         inputAudioMime = inputAudioFormat.getString(MediaFormat.KEY_MIME) ?: ""
         audioDecoder = MediaCodec.createDecoderByType(inputAudioMime)
@@ -140,8 +143,12 @@ class AudioResampler(context: Context, inputFilePath: String) {
             }
         }
 
+
         workingFilesDir?.absolutePath?.let {
-            resample("$it/$RAW_AUDIO_FILE_NAME", "$it/$RESAMPLED_RAW_AUDIO_FILE_NAME")
+            resample(
+                inputChannelCount,
+                "$it/$RAW_AUDIO_FILE_NAME",
+                "$it/$RESAMPLED_RAW_AUDIO_FILE_NAME")
         }
 
         // encode & mux audio file
@@ -165,7 +172,6 @@ class AudioResampler(context: Context, inputFilePath: String) {
 
         val outputVideoTrackIdx = muxer.addTrack(inputVideoFormat)
 
-        val channelCount = inputAudioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
         val sampleRate = OUTPUT_SAMPLE_RATE
 
         var videoEnd = false
@@ -177,7 +183,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
             it.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             it.setInteger(MediaFormat.KEY_SAMPLE_RATE, sampleRate)
             it.setInteger(MediaFormat.KEY_BIT_RATE, inputAudioFormat.getInteger(MediaFormat.KEY_BIT_RATE))
-            it.setInteger(MediaFormat.KEY_CHANNEL_COUNT, channelCount)
+            it.setInteger(MediaFormat.KEY_CHANNEL_COUNT, 1)
         }
         val audioEncoder = MediaCodec.createEncoderByType("audio/mp4a-latm")
         audioEncoder.configure(outputAudioFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -239,7 +245,7 @@ class AudioResampler(context: Context, inputFilePath: String) {
                                 totalBytesRead += bytesRead
                                 dstBuffer.put(audioTempBuffer, 0, bytesRead)
                                 audioEncoder.queueInputBuffer(inputBufferIndex, 0, bytesRead, presentationTimeUs, 0)
-                                presentationTimeUs = 1000000L  * (totalBytesRead / (2 * channelCount)) / sampleRate
+                                presentationTimeUs = 1000000L  * (totalBytesRead / 2) / sampleRate
                                 D.p("presentationTimeUs: " + presentationTimeUs)
                             }
                         }
